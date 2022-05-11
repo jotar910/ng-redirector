@@ -2,10 +2,16 @@
   <form id="environmentForm" @submit.prevent="updateConfigs">
     <fieldset>
       <legend>Environments</legend>
-      <section class="actions-container" :class="{'configuration-containers--disable': !isOn}">
+      <section class="actions-container actions-container--sticky" :class="{'configuration-containers--disable': !isOn}">
         <button type="submit">Apply</button>
         <button type="button" @click="clearConfigs">Clear</button>
-        <button type="button" @click="toggleOnOff">{{ isOn ? 'ON' : 'OFF' }}</button>
+        <button type="button" @click="toggleOnOff" class="ml-auto">{{ isOn ? 'ON' : 'OFF' }}</button>
+      </section>
+      <section class="actions-container" :class="{'configuration-containers--disable': !isOn}">
+        <span>Angular Proxy:</span>
+        <button type="button" @click="$refs.uploadInput.click()">Upload</button>
+        <button type="button" @click="downloadFile">Download</button>
+        <input type="file" accept="application/json" @change="uploadFile" ref="uploadInput" class="d-none">
       </section>
       <section class="configurations-container" :class="{'configuration-containers--disable': !isOn}">
         <section class="configuration-container" v-for="(configuration, configIndex) in model.configurations">
@@ -130,7 +136,25 @@ function mapSubmissionConfigs(configs) {
     to: config.to,
     rules: config.rules,
     cookies: config.cookies,
-  }))
+  }));
+}
+
+function mapConfigsProxy(configs) {
+  const result = {};
+  for (const config of configs) {
+    const secure = config.from.schema === 'https';
+    const target = `${config.to.schema}://${config.to.host}${config.to.port ? `:${config.to.port}` : ""}`;
+    for (const rule of config.rules) {
+      if (result[rule]) {
+        continue;
+      }
+      result[rule] = {
+        target,
+        secure
+      }
+    }
+  }
+  return result;
 }
 
 export default {
@@ -141,16 +165,21 @@ export default {
   }),
   created() {
     const _this = this;
-    let item = localStorage.getItem("chrome-extension::configurations");
-    if (item) {
-      _this.model.configurations = JSON.parse(item);
+    const configurationsState = localStorage.getItem("chrome-extension::configurations");
+    if (configurationsState) {
+      _this.model.configurations = JSON.parse(configurationsState);
     }
 
-    item = localStorage.getItem("chrome-extension::active");
-    if (item) {
-      _this.isOn = item === "true";
-    } else {
+    const activeState = localStorage.getItem("chrome-extension::active");
+    if (!activeState) {
       localStorage.setItem("chrome-extension::active", "false");
+      return;
+    }
+
+    _this.isOn = activeState === "true";
+
+    if (_this.isOn && configurationsState) {
+      this.sendSetConfigs(_this.model.configurations);
     }
   },
   methods: {
@@ -257,6 +286,59 @@ export default {
         configuration.cookies = [emptyCookie()];
       }
     },
+    uploadFile(event) {
+      const file = event.target.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.readAsText(file, "UTF-8");
+        reader.onload = (evt) => {
+          this.fillWithJsonContent(JSON.parse(evt.target.result));
+          event.target.value = '';
+        }
+        reader.onerror = () => {
+          alert("Error reading the file. Please try again!");
+          event.target.value = '';
+        }
+      }
+    },
+    downloadFile() {
+      const element = document.createElement('a');
+      element.setAttribute('href', `data:text/plain;charset=utf-8, ${encodeURIComponent(JSON.stringify(mapConfigsProxy(this.model.configurations)))}`);
+      element.setAttribute('download', 'proxy-configs.json');
+      document.body.appendChild(element);
+      element.click();
+      document.body.removeChild(element);
+    },
+    fillWithJsonContent(data) {
+      const map = {};
+      const rules = Object.keys(data);
+      let count = 0;
+
+      const configurations = [];
+      for (const rule of rules) {
+        const url = new URL(data[rule].target);
+        const urlStr = url.toString();
+
+        let index = map[urlStr];
+
+        if (index !== undefined) {
+          configurations[index].rules.push(rule);
+          continue;
+        }
+
+        index = map[urlStr] = count++;
+        configurations[index] = emptyConfiguration();
+
+        configurations[index].to = {
+          schema: url.protocol.replace(':', ''),
+          host: url.hostname,
+          port: url.port,
+        };
+        configurations[index].rules = [rule];
+      }
+
+      this.model.configurations = configurations.length ? configurations : [emptyConfiguration()];
+    },
     emptyConfiguration: emptyConfiguration,
     emptyRule: emptyRule,
     emptyCookie: emptyCookie,
@@ -279,12 +361,16 @@ body * {
   margin-bottom: 1rem;
 }
 
-.actions-container button:last-child {
-  margin-left: auto;
+.actions-container > :not(:last-child) {
+  margin-right: 0.5rem;
 }
 
-.actions-container button:not(:last-child) {
-  margin-right: 0.5rem;
+.actions-container.actions-container--sticky {
+  background: white;
+  padding: 10px 0;
+  position: sticky;
+  top: 0;
+  z-index: 1000;
 }
 
 .actions-container.configuration-containers--disable button:not(:last-child) {
@@ -413,6 +499,14 @@ body * {
   border-radius: 0 3px 3px 0;
   border-width: 1px;
   cursor: pointer;
+}
+
+.d-none {
+  display: none;
+}
+
+.ml-auto {
+  margin-left: auto;
 }
 
 </style>

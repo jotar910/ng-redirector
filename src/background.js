@@ -1,199 +1,202 @@
 console.info("Running...");
 
-/* const toSchema = "https";
-const toDomain = "qa.container-xchange.com";
-const toPort = "";
-const to = `${toSchema}://${toDomain}${toPort ? `:${toPort}` : ""}`;
+/**
+ * @type {Config[]}
+ */
+const configs = [];
 
-const fromSchema = "http";
-const fromDomain = "localhost";
-const fromPort = "9001";
-const from = `${fromSchema}://${fromDomain}:${fromPort ? `:${fromPort}` : ""}`;
+class Config {
+  static ID_COUNT = 1;
 
-const pathFilters = [
-  "/api/*",
-  "/insurance-api/*",
-  "/concontrol/*",
-  "/oauth/*",
-  "/metrics/metrics/*",
-  "/health/*",
-  "/configprops/*",
-  "/websocket/*",
-  "/send/message/*",
-  "/uploads/*",
-  "/public/*",
-  "/i18n/*",
-]; */
+  constructor(config) {
+    this.cookiesValue = "";
+    this.updateCookieOnTabActivation = false;
+    this.cookiesChangeDebounce = null;
 
-let initiated = false;
+    this.toSchema = null;
+    this.toDomain = null;
+    this.toPort = null;
+    this.to = null;
 
-let cookiesValue = "";
-let updateCookieOnTabActivation = false;
+    this.fromSchema = null;
+    this.fromDomain = null;
+    this.fromPort = null;
+    this.from = null;
 
-let toSchema = null;
-let toDomain = null;
-let toPort = null;
-let to = null;
+    this.pathFilters = null;
+    this.requiredCookies = null;
 
-let fromSchema = null;
-let fromDomain = null;
-let fromPort = null;
-let from = null;
+    this.curRules = [];
 
-let pathFilters = null;
-let requiredCookies = null;
+    if (config) {
+      this.fillValues(config);
+    }
+  }
 
-function getUrlFilters() {
-  return pathFilters.map((path) => [from, path].join(""));
-}
+  getUrlFilters() {
+    return this.pathFilters.map((path) => [this.from, path].join(""));
+  }
 
-function getUrlRedirectFilters() {
-  return pathFilters.map((path) => [to, path].join(""));
-}
+  getUrlRedirectFilters() {
+    return this.pathFilters.map((path) => [this.to, path].join(""));
+  }
 
-function debugMatches() {
-  chrome.declarativeNetRequest.onRuleMatchedDebug.addListener((o) => {
-    console.debug("Rule matched:", o);
-  });
-}
+  async fillCookies() {
+    const cookies = await new Promise((resolve) => chrome.cookies.getAll({url: this.from}, resolve));
+    this.cookiesValue = cookies
+        .map((cookie) => `${cookie.name}=${cookie.value}`)
+        .join("; ");
+  }
 
-async function fillCookies() {
-  const cookies = await new Promise((resolve) => chrome.cookies.getAll({url: from}, resolve));
-  cookiesValue = cookies
-      .map((cookie) => `${cookie.name}=${cookie.value}`)
-      .join("; ");
-}
+  async setRules() {
+    const rulesToAdd = [];
+    const urlsFilterRedirect = this.getUrlRedirectFilters();
 
-async function setRules() {
-  const rulesToAdd = [];
-  const urlsFilterRedirect = getUrlRedirectFilters();
+    await this.fillCookies();
 
-  fillCookies();
-
-  getUrlFilters().forEach((urlFilter, index) => {
-    // Redirect
-    rulesToAdd.push({
-      id: rulesToAdd.length + 1,
-      priority: 1,
-      action: {
-        type: "redirect",
-        redirect: {
-          transform: {
-            scheme: toSchema,
-            host: toDomain,
-            port: toPort,
+    this.getUrlFilters().forEach((urlFilter, index) => {
+      // Redirect
+      rulesToAdd.push({
+        id: Config.ID_COUNT++,
+        priority: 1,
+        action: {
+          type: "redirect",
+          redirect: {
+            transform: {
+              scheme: this.toSchema,
+              host: this.toDomain,
+              port: this.toPort,
+            },
           },
         },
-      },
-      condition: {urlFilter},
+        condition: {urlFilter},
+      });
+
+      // Add headers
+      rulesToAdd.push({
+        id: Config.ID_COUNT++,
+        priority: 1,
+        action: {
+          type: "modifyHeaders",
+          requestHeaders: [
+            // Cookies
+            {
+              header: "cookie",
+              operation: "set",
+              value: this.cookiesValue,
+            }
+          ],
+          responseHeaders: [
+            // Cors
+            {
+              header: "access-control-allow-origin",
+              operation: "set",
+              value: this.from,
+            },
+          ],
+        },
+        condition: {urlFilter: urlsFilterRedirect[index]},
+      });
     });
-
-    // Add headers
-    rulesToAdd.push({
-      id: rulesToAdd.length + 1,
-      priority: 1,
-      action: {
-        type: "modifyHeaders",
-        requestHeaders: [
-          // Cookies
-          {
-            header: "cookie",
-            operation: "set",
-            value: cookiesValue,
-          },
-        ],
-        responseHeaders: [
-          // Cors
-          {
-            header: "access-control-allow-origin",
-            operation: "set",
-            value: from,
-          },
-        ],
-      },
-      condition: {urlFilter: urlsFilterRedirect[index]},
+    console.info("Updating rules...");
+    chrome.declarativeNetRequest.updateDynamicRules({
+      addRules: rulesToAdd
     });
-  });
-  console.info("Updating rules...");
-  const lastRules = await new Promise((resolve) =>
-      chrome.declarativeNetRequest.getDynamicRules(resolve)
-  );
-  chrome.declarativeNetRequest.updateDynamicRules({
-    addRules: rulesToAdd,
-    removeRuleIds: lastRules.map((rule) => rule.id),
-  });
+    this.curRules = await new Promise((resolve) =>
+        chrome.declarativeNetRequest.getDynamicRules(resolve)
+    );
+    console.info("Rules updated!", this.curRules);
+  }
 
-  const curRules = await new Promise((resolve) =>
-      chrome.declarativeNetRequest.getDynamicRules(resolve)
-  );
-  console.info("Rules updated!", curRules);
-}
+  async removeRules() {
+    chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: this.curRules.map((rule) => rule.id),
+    });
+    this.curRules = [];
+    const unchangedRules = await new Promise((resolve) =>
+        chrome.declarativeNetRequest.getDynamicRules(resolve)
+    );
+    console.info("Rules removed!", unchangedRules);
+  }
 
-async function removeRules() {
-  const lastRules = await new Promise((resolve) =>
-      chrome.declarativeNetRequest.getDynamicRules(resolve)
-  );
-  chrome.declarativeNetRequest.updateDynamicRules({
-    removeRuleIds: lastRules.map((rule) => rule.id),
-  });
-}
+  async cookieChange(tab) {
+    await this.removeRules();
+    await this.setRules();
+    chrome.tabs.reload(tab.id);
+  }
 
-async function cookieChange(tab) {
-  setRules();
-  chrome.tabs.reload(tab.id);
-}
-
-async function showCookieChangeAlert(tab) {
-  updateCookieOnTabActivation = false;
-  await new Promise((resolve) => chrome.scripting.executeScript({
-    target: {tabId: tab.id},
-    files: ["confirm-alert.js"],
-  }, resolve));
-  chrome.tabs.sendMessage(
-      tab.id,
-      {
-        type: "show-confirmation",
-        payload: "Cache was changed! Wanna reload the page?",
-      },
-      async (response) => {
-        if (!response) {
-          return;
+  async showCookieChangeAlert(tab) {
+    this.updateCookieOnTabActivation = false;
+    await new Promise((resolve) => chrome.tabs.executeScript(tab.id, {
+      file: "confirm-alert.js",
+    }, resolve));
+    chrome.tabs.sendMessage(
+        tab.id,
+        {
+          type: "show-confirmation",
+          payload: "Cache was changed! Wanna reload the page?",
+        },
+        (response) => {
+          if (!response) {
+            return;
+          }
+          this.cookieChange(tab);
         }
-        cookieChange(tab);
-      }
-  );
-}
+    );
+  }
 
-function addCookiesChanged() {
-  let debounce = null;
-  chrome.cookies.onChanged.addListener((change) => {
+
+  /**
+   * @param {CookieChangeInfo} change
+   */
+  cookiesChanged(change) {
+    this.cookiesChangeDebounce = null;
     if (
-        change.cookie.domain !== fromDomain ||
-        !requiredCookies[change.cookie.name]
+        change.cookie.domain !== this.fromDomain ||
+        !this.requiredCookies[change.cookie.name]
     ) {
       return;
     }
-    clearTimeout(debounce);
-    debounce = setTimeout(async () => {
-      const prevCookiesValue = cookiesValue;
-      await fillCookies();
-      updateCookieOnTabActivation = prevCookiesValue !== cookiesValue;
-      if (!updateCookieOnTabActivation) {
+    clearTimeout(this.cookiesChangeDebounce);
+    this.cookiesChangeDebounce = setTimeout(async () => {
+      const prevCookiesValue = this.cookiesValue;
+      await this.fillCookies();
+      this.updateCookieOnTabActivation = prevCookiesValue !== this.cookiesValue;
+      if (!this.updateCookieOnTabActivation) {
         return;
       }
       const tab = await getCurrentTab();
-      if (!!tab.url.startsWith(from)) {
-        showCookieChangeAlert(tab);
+      if (!!tab.url.startsWith(this.from)) {
+        this.showCookieChangeAlert(tab);
       }
     }, 500);
-  });
+  }
 
-  chrome.tabs.onActivated.addListener(async (activeInfo) => {
+  /**
+   * @param {TabActiveInfo} activeInfo
+   */
+  async tabChanged(activeInfo) {
     const tab = await new Promise((resolve) => chrome.tabs.get(activeInfo.tabId, resolve));
-    if (updateCookieOnTabActivation && !!tab.url.startsWith(from)) {
-      showCookieChangeAlert(tab);
+    if (this.updateCookieOnTabActivation && !!tab.url.startsWith(this.from)) {
+      this.showCookieChangeAlert(tab);
     }
-  });
+  }
+
+  fillValues(value) {
+    this.fromSchema = value.from.schema;
+    this.fromDomain = value.from.host;
+    this.fromPort = value.from.port;
+    this.from = `${this.fromSchema}://${this.fromDomain}${this.fromPort ? `:${this.fromPort}` : ""}`;
+    this.toSchema = value.to.schema;
+    this.toDomain = value.to.host;
+    this.toPort = value.to.port;
+    this.to = `${this.toSchema}://${this.toDomain}${this.toPort ? `:${this.toPort}` : ""}`;
+    this.pathFilters = value.rules;
+    this.requiredCookies = value.cookies.reduce(
+        (accum, cur) => ({...accum, [cur]: true}),
+        {}
+    );
+  }
 }
 
 async function getCurrentTab() {
@@ -202,59 +205,30 @@ async function getCurrentTab() {
   return tab;
 }
 
-function fillValues(value) {
-  fromSchema = value.from.schema;
-  fromDomain = value.from.host;
-  fromPort = value.from.port;
-  from = `${fromSchema}://${fromDomain}${fromPort ? `:${fromPort}` : ""}`;
-  toSchema = value.to.schema;
-  toDomain = value.to.host;
-  toPort = value.to.port;
-  to = `${toSchema}://${toDomain}${toPort ? `:${toPort}` : ""}`;
-  pathFilters = value.rules;
-  requiredCookies = value.cookies.reduce(
-      (accum, cur) => ({...accum, [cur]: true}),
-      {}
-  );
+async function resetConfigurations() {
+  for (const config of configs) {
+    await config.removeRules();
+  }
+  configs.length = 0;
 }
 
-function listenToConfigs() {
-  chrome.runtime.onMessage.addListener((request, _, sendResponse) => {
-    if (request.type === "reset-config") {
-      sendResponse("reset");
-      removeRules();
-      return;
-    }
-    if (request.type !== "update-config") {
-      return;
-    }
+async function fillConfigurations(configurations) {
+  await resetConfigurations();
+  for (const configuration of configurations) {
+    const config = new Config(configuration);
+    await config.fillCookies();
+    await config.setRules()
+    configs.push(config);
+  }
+}
 
-    try {
-      fillValues(request.payload[0]);
-      sendResponse("updated");
-
-      fillCookies().then(() => setRules());
-
-      if (initiated) {
-        return;
-      }
-
-      debugMatches();
-      addCookiesChanged();
-
-      initiated = true;
-    } catch (e) {
-      console.error(e);
-      sendResponse({type: "error", payload: JSON.stringify(e)});
-    }
+function debugMatches() {
+  chrome.declarativeNetRequest.onRuleMatchedDebug.addListener((o) => {
+    console.debug("Rule matched:", o);
   });
 }
 
-async function init() {
-  setInterval(() => console.info("Alive!"), 10000);
-
-  listenToConfigs();
-
+function listenOnInstall() {
   let retries = null;
 
   const loadInitialValues = async () => {
@@ -270,12 +244,74 @@ async function init() {
   };
 
   // Check whether new version is installed
-  chrome.runtime.onInstalled.addListener(function (details) {
+  chrome.runtime.onInstalled.addListener(async (details) => {
     if (details.reason === "install" || details.reason === "update") {
-      removeRules();
-      loadInitialValues();
+      const lastRules = await new Promise((resolve) =>
+          chrome.declarativeNetRequest.getDynamicRules(resolve)
+      );
+      chrome.declarativeNetRequest.updateDynamicRules({
+        removeRuleIds: lastRules.map((rule) => rule.id),
+      });
+      await loadInitialValues();
     }
   });
+}
+
+function listenToConfigs() {
+  chrome.runtime.onMessage.addListener((request, _, sendResponse) => {
+    if (request.type === "reset-config") {
+      resetConfigurations();
+      sendResponse("reset");
+      return;
+    }
+    if (request.type !== "update-config") {
+      return;
+    }
+
+    try {
+      fillConfigurations(request.payload);
+      sendResponse("updated");
+    } catch (e) {
+      console.error(e);
+      sendResponse({type: "error", payload: JSON.stringify(e)});
+    }
+  });
+}
+
+function listenToCookies() {
+  chrome.cookies.onChanged.addListener((change) => {
+    const trackDomain = {};
+    configs.forEach((config) => {
+      if (trackDomain[config.fromDomain]) {
+        return;
+      }
+      trackDomain[config.fromDomain] = true;
+      config.cookiesChanged(change);
+    });
+  });
+}
+
+function listenToTabChange() {
+  chrome.tabs.onActivated.addListener((activeInfo) => {
+    const trackUrl = {};
+    configs.forEach((config) => {
+      if (trackUrl[config.from]) {
+        return;
+      }
+      trackUrl[config.from] = true;
+      config.tabChanged(activeInfo);
+    });
+  });
+}
+
+async function init() {
+  setInterval(() => console.info("Alive!"), 10000);
+
+  debugMatches();
+  listenOnInstall();
+  listenToConfigs();
+  listenToCookies();
+  listenToTabChange();
 }
 
 init();

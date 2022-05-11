@@ -11,6 +11,7 @@ const config = {
   context: __dirname + '/src',
   entry: {
     'background': './background.js',
+    'confirm-alert': './confirm-alert.js',
     'popup/popup': './popup/popup.js',
   },
   output: {
