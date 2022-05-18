@@ -1,0 +1,162 @@
+body * {
+  box-sizing: border-box;
+}
+
+#environmentForm {
+  margin: auto;
+  max-width: 500px;
+}
+
+.actions-container {
+  display: flex;
+  margin-bottom: 1rem;
+}
+
+.actions-container > :not(:last-child) {
+  margin-right: 0.5rem;
+}
+
+.actions-container.actions-container--sticky {
+  background: white;
+  padding: 10px 0;
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+}
+
+.actions-container.configuration-containers--disable button:not(:last-child) {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.configurations-container,
+.configuration-container {
+  display: flex;
+  flex-direction: column;
+}
+
+.configurations-container.configuration-containers--disable {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.configuration-container {
+  min-width: 350px;
+  padding: 0.5rem;
+}
+
+.configuration-container > :not(:last-child) {
+  margin-bottom: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.configuration-container > hr {
+  margin: 1.5rem 0 1rem;
+}
+
+.configuration-container .configuration-container__from-to > article {
+  column-gap: 0.75rem;
+  display: grid;
+  grid-template-columns: 1fr 3fr 1fr;
+}
+
+.configuration-container .configuration-container__from-to > hr {
+  border-width: 10px;
+  border-style: solid;
+  border-color: lightgray transparent transparent;
+  margin-bottom: calc(0.75rem - 10px);
+  height: 0;
+  width: 0;
+}
+
+.configuration-container .configuration-container__property {
+  display: flex;
+  flex-direction: column;
+}
+
+.configuration-container .configuration-container__property > button {
+  margin: auto;
+}
+
+.configuration-container .configuration-container__property label {
+  display: flex;
+  justify-content: space-between;
+}
+
+.configuration-container .configuration-container__property label > span {
+  margin-right: 0.5rem;
+}
+
+.configuration-container .configuration-container__property > .form-group button {
+  margin-bottom: 0.5rem;
+}
+
+.configuration-container .configuration-container__property > .form-group textarea {
+  display: block;
+}
+
+.configuration-container .configuration-container__property .form-group .form-control:not(:last-child) {
+  margin-bottom: 0.25rem;
+}
+
+.form-group {
+  margin-bottom: 0.75rem;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.form-group label.required::after {
+  color: brown;
+  content: '*';
+}
+
+.form-group .form-control {
+  border-radius: 3px;
+  border-width: 1px;
+  width: 100%;
+}
+
+.form-group textarea.form-control {
+  resize: vertical;
+}
+
+.input-group {
+  display: flex;
+  position: relative;
+}
+
+.input-group > input {
+  padding-right: 24px;
+}
+
+.input-group > button {
+  padding: 0;
+  height: 19px;
+  width: 20px;
+  margin-left: 10px;
+  line-height: 14px;
+  position: absolute;
+  right: 0;
+  border-radius: 0 3px 3px 0;
+  border-width: 1px;
+  cursor: pointer;
+}
+
+.d-none {
+  display: none;
+}
+
+.ml-auto {
+  margin-left: auto;
+}
+
+.mr-2 {
+  margin-right: 0.5rem;
+}
+
+.w-35 {
+  width: 35% !important;
+}

@@ -24,6 +24,7 @@ class Config {
     this.from = null;
 
     this.pathFilters = null;
+    this.customHeaders = null;
     this.requiredCookies = null;
 
     this.curRules = [];
@@ -84,7 +85,13 @@ class Config {
               header: "cookie",
               operation: "set",
               value: this.cookiesValue,
-            }
+            },
+            // Custom
+            ...this.customHeaders.map((h) => ({
+              header: h.name,
+              operation: "set",
+              value: h.value
+            }))
           ],
           responseHeaders: [
             // Cors
@@ -127,8 +134,9 @@ class Config {
 
   async showCookieChangeAlert(tab) {
     this.updateCookieOnTabActivation = false;
-    await new Promise((resolve) => chrome.tabs.executeScript(tab.id, {
-      file: "confirm-alert.js",
+    await new Promise((resolve) => chrome.scripting.executeScript({
+      target: {tabId: tab.id},
+      files: ["confirm-alert.js"],
     }, resolve));
     chrome.tabs.sendMessage(
         tab.id,
@@ -192,6 +200,7 @@ class Config {
     this.toPort = value.to.port;
     this.to = `${this.toSchema}://${this.toDomain}${this.toPort ? `:${this.toPort}` : ""}`;
     this.pathFilters = value.rules;
+    this.customHeaders = value.headers;
     this.requiredCookies = value.cookies.reduce(
         (accum, cur) => ({...accum, [cur]: true}),
         {}
