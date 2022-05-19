@@ -106,6 +106,28 @@
             </div>
             <button type="button" @click="configuration.cookies.push(emptyCookie())">Add</button>
           </article>
+          <article class="configuration-container__property">
+            <div class="form-group">
+              <label>
+                <span>Path Rewrite</span>
+                <button type="button" @click="togglePathsRewriteView(configuration)">Toggle view</button>
+              </label>
+              <template v-if="configuration.pathRewriteAsText">
+                <textarea v-model="configuration.pathRewriteText" rows="10" class="form-control"
+                          @blur="fillPathsRewriteWithText(configuration)"></textarea>
+              </template>
+              <template v-else>
+                <div class="input-group" v-for="(_, index) in configuration.pathsRewrite">
+                  <input type="text" class="form-control w-35 mr-2" v-model="configuration.pathsRewrite[index].searchPattern"/>
+                  <input type="text" class="form-control" v-model="configuration.pathsRewrite[index].replaceValue"/>
+                  <button type="button" @click="deletePathRewrite(configuration, index)">x</button>
+                </div>
+              </template>
+            </div>
+            <button v-if="!configuration.pathRewriteAsText" type="button"
+                    @click="configuration.pathsRewrite.push(emptyPathRewrite())">Add
+            </button>
+          </article>
           <button type="button" v-if="model.configurations.length > 1"
                   @click="deleteConfig(configIndex)">
             Delete configuration
@@ -139,12 +161,15 @@ function emptyConfiguration() {
     rules: [emptyRule()],
     headers: [emptyHeader()],
     cookies: [emptyCookie()],
+    pathsRewrite: [emptyPathRewrite()],
     rulesText: '',
     rulesAsText: false,
     headersText: '',
     headersAsText: false,
     cookiesText: '',
-    cookiesAsText: false
+    cookiesAsText: false,
+    pathRewriteText: '',
+    pathRewriteAsText: false
   };
 }
 
@@ -152,12 +177,16 @@ function emptyRule() {
   return '';
 }
 
+function emptyHeader() {
+  return { name: '', value: '' };
+}
+
 function emptyCookie() {
   return '';
 }
 
-function emptyHeader() {
-  return { name: '', value: '' };
+function emptyPathRewrite() {
+  return { searchPattern: '', replaceValue: '' };
 }
 
 function mapSubmissionConfigs(configs) {
@@ -166,7 +195,8 @@ function mapSubmissionConfigs(configs) {
     to: config.to,
     rules: config.rules.filter((rule) => !!rule),
     headers: config.headers.filter((header) => !!header.name),
-    cookies: config.cookies.filter((cookie) => !!cookie)
+    cookies: config.cookies.filter((cookie) => !!cookie),
+    pathsRewrite: config.pathsRewrite.filter((path) => !!path.searchPattern)
   }));
 }
 
@@ -221,7 +251,7 @@ function mapFromConfigsProxy(data) {
     configurations[index].from = {
       schema: data[rule].secure ? 'https' : 'http',
       host: 'localhost',
-      port: ''
+      port: '9001'
     };
 
     configurations[index].to = {
@@ -330,6 +360,20 @@ export default {
       }
       this.$forceUpdate();
     },
+    togglePathsRewriteView(configuration) {
+      const _this = this;
+      configuration.pathRewriteAsText = !configuration.pathRewriteAsText;
+
+      if (configuration.pathRewriteAsText) {
+        configuration.pathRewriteText = configuration.pathsRewrite
+            .filter((path) => !!path.searchPattern)
+            .map((path) => `"${path.searchPattern}": ${JSON.stringify(path.replaceValue)}`)
+            .join('\n');
+      } else {
+        _this.fillPathsRewriteWithText(configuration);
+      }
+      this.$forceUpdate();
+    },
     deleteRule(configuration, index) {
       if (configuration.rules.length < 2) {
         configuration.rules = configuration.rules.map(() => emptyRule());
@@ -352,6 +396,14 @@ export default {
         return false;
       }
       configuration.cookies.splice(index, 1);
+      return true;
+    },
+    deletePathRewrite(configuration, index) {
+      if (configuration.pathsRewrite.length < 2) {
+        configuration.pathsRewrite = configuration.pathsRewrite.map(() => emptyPathRewrite());
+        return false;
+      }
+      configuration.pathsRewrite.splice(index, 1);
       return true;
     },
     deleteConfig(index) {
@@ -421,6 +473,21 @@ export default {
         configuration.cookies = [emptyCookie()];
       }
     },
+    fillPathsRewriteWithText(configuration) {
+      const pathsRewrite = [];
+      const pathsRewriteRawEntries = (configuration.pathRewriteText ?? '').split('\n').filter(Boolean);
+      for (const rawEntry of pathsRewriteRawEntries) {
+        try {
+          const entryObj = JSON.parse(`{${rawEntry}}`);
+          for (const key of Object.keys(entryObj)) {
+            pathsRewrite.push({ searchPattern: key, replaceValue: entryObj[key] });
+          }
+        } catch (error) {
+          // Empty by design.
+        }
+      }
+      configuration.pathsRewrite = !pathsRewrite.length ? [emptyPathRewrite()] : pathsRewrite;
+    },
     uploadFile(event) {
       const file = event.target.files[0];
       if (file) {
@@ -451,7 +518,8 @@ export default {
     emptyConfiguration: emptyConfiguration,
     emptyRule: emptyRule,
     emptyHeader: emptyHeader,
-    emptyCookie: emptyCookie
+    emptyCookie: emptyCookie,
+    emptyPathRewrite: emptyPathRewrite
   }
 };
 </script>

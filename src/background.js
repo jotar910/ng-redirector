@@ -26,16 +26,13 @@ class Config {
     this.pathFilters = null;
     this.customHeaders = null;
     this.requiredCookies = null;
+    this.pathsRewrite = null;
 
     this.curRules = [];
 
     if (config) {
       this.fillValues(config);
     }
-  }
-
-  getUrlFilters() {
-    return this.pathFilters.map((path) => [this.from, path].join(""));
   }
 
   getUrlRedirectFilters() {
@@ -45,8 +42,8 @@ class Config {
   async fillCookies() {
     const cookies = await new Promise((resolve) => chrome.cookies.getAll({url: this.from}, resolve));
     this.cookiesValue = cookies
-        .map((cookie) => `${cookie.name}=${cookie.value}`)
-        .join("; ");
+      .map((cookie) => `${cookie.name}=${cookie.value}`)
+      .join("; ");
   }
 
   async setRules() {
@@ -55,7 +52,7 @@ class Config {
 
     await this.fillCookies();
 
-    this.getUrlFilters().forEach((urlFilter, index) => {
+    for (let index = 0; index < this.pathFilters.length; ++index) {
       // Redirect
       rulesToAdd.push({
         id: Config.ID_COUNT++,
@@ -70,7 +67,7 @@ class Config {
             },
           },
         },
-        condition: {urlFilter},
+        condition: {urlFilter: `${this.from}${this.pathFilters[index]}`},
       });
 
       // Add headers
@@ -104,13 +101,31 @@ class Config {
         },
         condition: {urlFilter: urlsFilterRedirect[index]},
       });
-    });
+    }
+
+    for (let index = 0; index < this.pathsRewrite.length; ++index) {
+      const {searchPattern, replaceValue} = this.pathsRewrite[index];
+      const path = searchPattern.startsWith('^') ? searchPattern.slice(1) : `.*${searchPattern}`;
+
+      // Redirect by pattern.
+      rulesToAdd.push({
+        id: Config.ID_COUNT++,
+        priority: 2,
+        action: {
+          type: "redirect",
+          redirect: {
+            regexSubstitution: `${this.toDomain}${this.toPort ? `:${this.toPort}` : ''}${replaceValue}`
+          }
+        },
+        condition: {regexFilter: `${this.toDomain.replaceAll('.', '\\.')}${this.toPort ? `:${this.toPort}` : ''}${path}`}});
+    }
+
     console.info("Updating rules...");
     chrome.declarativeNetRequest.updateDynamicRules({
       addRules: rulesToAdd
     });
     this.curRules = await new Promise((resolve) =>
-        chrome.declarativeNetRequest.getDynamicRules(resolve)
+      chrome.declarativeNetRequest.getDynamicRules(resolve)
     );
     console.info("Rules updated!", this.curRules);
   }
@@ -121,7 +136,7 @@ class Config {
     });
     this.curRules = [];
     const unchangedRules = await new Promise((resolve) =>
-        chrome.declarativeNetRequest.getDynamicRules(resolve)
+      chrome.declarativeNetRequest.getDynamicRules(resolve)
     );
     console.info("Rules removed!", unchangedRules);
   }
@@ -139,17 +154,17 @@ class Config {
       files: ["confirm-alert.js"],
     }, resolve));
     chrome.tabs.sendMessage(
-        tab.id,
-        {
-          type: "show-confirmation",
-          payload: "Cache was changed! Wanna reload the page?",
-        },
-        (response) => {
-          if (!response) {
-            return;
-          }
-          this.cookieChange(tab);
+      tab.id,
+      {
+        type: "show-confirmation",
+        payload: "Cache was changed! Wanna reload the page?",
+      },
+      (response) => {
+        if (!response) {
+          return;
         }
+        this.cookieChange(tab);
+      }
     );
   }
 
@@ -160,8 +175,8 @@ class Config {
   cookiesChanged(change) {
     this.cookiesChangeDebounce = null;
     if (
-        change.cookie.domain !== this.fromDomain ||
-        !this.requiredCookies[change.cookie.name]
+      change.cookie.domain !== this.fromDomain ||
+      !this.requiredCookies[change.cookie.name]
     ) {
       return;
     }
@@ -201,9 +216,10 @@ class Config {
     this.to = `${this.toSchema}://${this.toDomain}${this.toPort ? `:${this.toPort}` : ""}`;
     this.pathFilters = value.rules;
     this.customHeaders = value.headers;
+    this.pathsRewrite = value.pathsRewrite;
     this.requiredCookies = value.cookies.reduce(
-        (accum, cur) => ({...accum, [cur]: true}),
-        {}
+      (accum, cur) => ({...accum, [cur]: true}),
+      {}
     );
   }
 }
@@ -256,7 +272,7 @@ function listenOnInstall() {
   chrome.runtime.onInstalled.addListener(async (details) => {
     if (details.reason === "install" || details.reason === "update") {
       const lastRules = await new Promise((resolve) =>
-          chrome.declarativeNetRequest.getDynamicRules(resolve)
+        chrome.declarativeNetRequest.getDynamicRules(resolve)
       );
       chrome.declarativeNetRequest.updateDynamicRules({
         removeRuleIds: lastRules.map((rule) => rule.id),
