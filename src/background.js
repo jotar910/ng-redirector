@@ -4,11 +4,14 @@ console.info("Running...");
  * @type {Config[]}
  */
 const configs = [];
+const storageKey = 'ng-redirector::storage';
 
 class Config {
   static ID_COUNT = 1;
 
   constructor(config) {
+    this.configValue = null;
+
     this.cookiesValue = "";
     this.updateCookieOnTabActivation = false;
     this.cookiesChangeDebounce = null;
@@ -117,7 +120,8 @@ class Config {
             regexSubstitution: `${this.toDomain}${this.toPort ? `:${this.toPort}` : ''}${replaceValue}`
           }
         },
-        condition: {regexFilter: `${this.toDomain.replaceAll('.', '\\.')}${this.toPort ? `:${this.toPort}` : ''}${path}`}});
+        condition: {regexFilter: `${this.toDomain.replaceAll('.', '\\.')}${this.toPort ? `:${this.toPort}` : ''}${path}`}
+      });
     }
 
     console.info("Updating rules...");
@@ -189,7 +193,8 @@ class Config {
         return;
       }
       const tab = await getCurrentTab();
-      if (!!tab.url.startsWith(this.from)) {
+      if (!!tab?.url.startsWith(this.from)) {
+        console.debug('Cookie changed', change);
         this.showCookieChangeAlert(tab);
       }
     }, 500);
@@ -200,12 +205,13 @@ class Config {
    */
   async tabChanged(activeInfo) {
     const tab = await new Promise((resolve) => chrome.tabs.get(activeInfo.tabId, resolve));
-    if (this.updateCookieOnTabActivation && !!tab.url.startsWith(this.from)) {
+    if (this.updateCookieOnTabActivation && !!tab?.url.startsWith(this.from)) {
       this.showCookieChangeAlert(tab);
     }
   }
 
   fillValues(value) {
+    this.configValue = value;
     this.fromSchema = value.from.schema;
     this.fromDomain = value.from.host;
     this.fromPort = value.from.port;
@@ -242,18 +248,59 @@ async function fillConfigurations(configurations) {
   for (const configuration of configurations) {
     const config = new Config(configuration);
     await config.fillCookies();
-    await config.setRules()
+    await config.setRules();
     configs.push(config);
   }
 }
 
+async function setConfigurationsStorage() {
+  return new Promise((resolve) => {
+    const configsValues = [];
+    for (const config of configs) {
+      configsValues.push(config.configValue);
+    }
+    chrome.storage.sync.set({[storageKey]: JSON.stringify(configsValues)}, () => resolve());
+  });
+}
+
+async function getConfigurationsStorage() {
+  return new Promise((resolve) => {
+    chrome.storage.sync.get([storageKey], (values) => {
+      if (values?.[storageKey]) {
+        return resolve(JSON.parse(values[storageKey]));
+      }
+      return resolve([]);
+    });
+  });
+}
+
+async function removeConfigurationsStorage() {
+  return new Promise((resolve) => {
+    chrome.storage.sync.remove([storageKey], () => resolve());
+  });
+}
+
+async function clearAllRules() {
+  const curRules = await new Promise((resolve) =>
+    chrome.declarativeNetRequest.getDynamicRules(resolve)
+  );
+  chrome.declarativeNetRequest.updateDynamicRules({
+    removeRuleIds: curRules.map((rule) => rule.id),
+  });
+}
+
 function debugMatches() {
-  chrome.declarativeNetRequest.onRuleMatchedDebug.addListener((o) => {
+  console.debug('Debugging matches', !!chrome.declarativeNetRequest.onRuleMatchedDebug);
+  chrome.declarativeNetRequest.onRuleMatchedDebug?.addListener((o) => {
     console.debug("Rule matched:", o);
   });
 }
 
-function listenOnInstall() {
+let handleListenOnInstall = () => {
+  // Empty by design.
+};
+
+function startListenOnInstall() {
   let retries = null;
 
   const loadInitialValues = async () => {
@@ -269,7 +316,8 @@ function listenOnInstall() {
   };
 
   // Check whether new version is installed
-  chrome.runtime.onInstalled.addListener(async (details) => {
+  console.debug('Initiating for the first time', !!chrome.runtime.onInstalled);
+  handleListenOnInstall = async (details) => {
     if (details.reason === "install" || details.reason === "update") {
       const lastRules = await new Promise((resolve) =>
         chrome.declarativeNetRequest.getDynamicRules(resolve)
@@ -279,64 +327,170 @@ function listenOnInstall() {
       });
       await loadInitialValues();
     }
-  });
+  };
+  chrome.runtime.onInstalled?.addListener(handleListenOnInstall);
 }
 
-function listenToConfigs() {
-  chrome.runtime.onMessage.addListener((request, _, sendResponse) => {
-    if (request.type === "reset-config") {
-      resetConfigurations();
-      sendResponse("reset");
+function stopListenOnInstall() {
+  chrome.runtime.onInstalled?.removeListener(handleListenOnInstall);
+}
+
+/**
+ * @param {any} request
+ * @param {MessageSender} _
+ * @param {(response: any) => void} sendResponse
+ */
+const handleListenToConfigs = (request, _, sendResponse) => {
+  console.debug('Handling configuration message', request);
+  if (request.type === "reset-config") {
+    resetConfigurations().then(() => removeConfigurationsStorage());
+    sendResponse("reset");
+    return;
+  }
+  if (request.type !== "update-config") {
+    return;
+  }
+
+  try {
+    fillConfigurations(request.payload).then(() => setConfigurationsStorage());
+    sendResponse("updated");
+  } catch (e) {
+    console.error(e);
+    sendResponse({type: "error", payload: JSON.stringify(e)});
+  }
+};
+
+function startListenToConfigs() {
+  console.debug('Listening to configuration messages', !!chrome.runtime.onMessage);
+  chrome.runtime.onMessage?.addListener(handleListenToConfigs);
+}
+
+function stopListenToConfigs() {
+  chrome.runtime.onMessage?.removeListener(handleListenToConfigs);
+}
+
+/**
+ * @param {CookieChangeInfo} change
+ */
+const handleListenToCookies = (change) => {
+  const trackDomain = {};
+  configs.forEach((config) => {
+    if (trackDomain[config.fromDomain]) {
       return;
     }
-    if (request.type !== "update-config") {
+    trackDomain[config.fromDomain] = true;
+    config.cookiesChanged(change);
+  });
+}
+
+function startListenToCookies() {
+  console.debug('Listening to cookies change', !!chrome.cookies.onChanged);
+  chrome.cookies.onChanged?.addListener(handleListenToCookies);
+}
+
+function stopListenToCookies() {
+  chrome.cookies.onChanged?.removeListener(handleListenToCookies);
+}
+
+/**
+ * @param {TabActiveInfo} activeInfo
+ */
+const handleListenToTabChange = (activeInfo) => {
+  const trackUrl = {};
+  configs.forEach((config) => {
+    if (trackUrl[config.from]) {
       return;
     }
+    trackUrl[config.from] = true;
+    config.tabChanged(activeInfo);
+  });
+};
 
-    try {
-      fillConfigurations(request.payload);
-      sendResponse("updated");
-    } catch (e) {
-      console.error(e);
-      sendResponse({type: "error", payload: JSON.stringify(e)});
+function startListenToTabChange() {
+  console.debug('Listening to tab change', !!chrome.tabs.onActivated);
+  chrome.tabs.onActivated?.addListener(handleListenToTabChange);
+}
+
+function stopListenToTabChange() {
+  chrome.tabs.onActivated?.removeListener(handleListenToTabChange);
+}
+
+let isLifecycleStarted = false;
+let lifecycleStartTimeout = null;
+
+function lifecycle() {
+  console.debug('Listening to browser startup', !!chrome.runtime.onStartup);
+
+  chrome.runtime.onInstalled?.addListener(() => {
+    console.debug('Runtime event: onInstalled');
+    onInit();
+    isLifecycleStarted = true;
+  });
+  chrome.runtime.onUninstalled?.addListener(() => {
+    console.debug('Runtime event: onUninstalled');
+    onDestroy();
+  });
+
+  chrome.management.onEnabled?.addListener(() => {
+    console.debug('Management event: onEnabled');
+    onInit();
+    isLifecycleStarted = true;
+  });
+  chrome.management.onDisabled?.addListener(() => {
+    console.debug('Management event: onDisabled');
+    onDestroy();
+  });
+
+  chrome.runtime.onSuspend?.addListener(() => {
+    console.debug('Runtime event: onSuspend');
+    onDestroy();
+  });
+  chrome.runtime.onSuspendCanceled?.addListener(() => {
+    console.debug('Runtime event: onSuspendCanceled');
+    onInit();
+    isLifecycleStarted = true;
+  });
+
+  clearTimeout(lifecycleStartTimeout);
+  lifecycleStartTimeout = setTimeout(() => {
+    if (!isLifecycleStarted) {
+      console.debug('Executed manual start');
+      onInit();
+      isLifecycleStarted = true;
     }
-  });
+  }, 1000);
 }
 
-function listenToCookies() {
-  chrome.cookies.onChanged.addListener((change) => {
-    const trackDomain = {};
-    configs.forEach((config) => {
-      if (trackDomain[config.fromDomain]) {
-        return;
-      }
-      trackDomain[config.fromDomain] = true;
-      config.cookiesChanged(change);
-    });
-  });
+async function onInit() {
+  console.info('Initiating execution');
+
+  clearTimeout(lifecycleStartTimeout);
+
+  await clearAllRules();
+  await fillConfigurations(await getConfigurationsStorage());
+
+  startListenOnInstall();
+  startListenToConfigs();
+  startListenToCookies();
+  startListenToTabChange();
 }
 
-function listenToTabChange() {
-  chrome.tabs.onActivated.addListener((activeInfo) => {
-    const trackUrl = {};
-    configs.forEach((config) => {
-      if (trackUrl[config.from]) {
-        return;
-      }
-      trackUrl[config.from] = true;
-      config.tabChanged(activeInfo);
-    });
-  });
+async function onDestroy() {
+  console.info('Destroying execution');
+
+  stopListenToTabChange();
+  stopListenToCookies();
+  stopListenToConfigs();
+  stopListenOnInstall();
+
+  await resetConfigurations();
 }
 
-async function init() {
+function start() {
   setInterval(() => console.info("Alive!"), 10000);
 
   debugMatches();
-  listenOnInstall();
-  listenToConfigs();
-  listenToCookies();
-  listenToTabChange();
+  lifecycle();
 }
 
-init();
+start();
